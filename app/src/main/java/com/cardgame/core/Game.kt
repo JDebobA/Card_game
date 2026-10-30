@@ -16,7 +16,9 @@ import kotlin.random.Random
 class Game(
     playerFaction: Faction,
     enemyFaction: Faction,
-    private val rng: Random = Random.Default
+    private val rng: Random = Random.Default,
+    /** true — оба соперника живые люди (сетевая игра): бот не ходит, подготовка идёт по очереди. */
+    val pvp: Boolean = false
 ) {
     val player = Board(Side.PLAYER, playerFaction)
     val enemy = Board(Side.ENEMY, enemyFaction)
@@ -38,6 +40,11 @@ class Game(
     var note: String? = null
         private set
 
+    /** Только для pvp: кто сейчас расставляет карты. Первым ходит PLAYER в нечётных раундах, ENEMY — в чётных. */
+    var prepTurn: Side = Side.PLAYER
+        private set
+    private val prepFirst: Side get() = if (round % 2 == 1) Side.PLAYER else Side.ENEMY
+
     val isFinal: Boolean get() = round == FINAL_ROUND
 
     private val damageDealt = mutableMapOf(Side.PLAYER to 0, Side.ENEMY to 0)
@@ -51,7 +58,7 @@ class Game(
             b.draw.shuffle(rng)
             drawUp(b)
         }
-        botPrep()
+        if (pvp) prepTurn = prepFirst else botPrep()
     }
 
     fun board(side: Side): Board = if (side == Side.PLAYER) player else enemy
@@ -108,14 +115,27 @@ class Game(
 
     // ======================= Подготовка =======================
 
-    private fun drawUp(b: Board) {
-        while (b.hand.size < HAND_SIZE) {
+    /** Уничтоженные карты уходят с поля в сброс; вернутся свежими, когда колода закончится. */
+    private fun bury() {
+        for (b in listOf(player, enemy)) {
+            val dead = b.field.filter { !it.alive }
+            if (dead.isNotEmpty()) {
+                b.field.removeAll { !it.alive }
+                b.discard.addAll(dead)
+            }
+        }
+    }
+
+    /** Добор карт в руку до limit. Если в руке уже limit и больше — ничего не выдаётся. */
+    private fun drawUp(b: Board, limit: Int = HAND_SIZE) {
+        while (b.hand.size < limit) {
             if (b.draw.isEmpty()) {
                 if (b.discard.isEmpty()) return
                 // Сброс замешивается обратно: «свежие» карты без ран.
                 for (c in b.discard) {
                     c.damage = 0
                     c.atkBonus = 0
+                    c.alive = true
                 }
                 b.draw.addAll(b.discard.shuffled(rng))
                 b.discard.clear()
@@ -124,8 +144,11 @@ class Game(
         }
     }
 
+    /** Можно ли сейчас менять карты этой стороны. */
+    fun canAct(side: Side): Boolean = phase == Phase.PREP && (!pvp || side == prepTurn)
+
     fun playFromHand(side: Side, uid: Int): Boolean {
-        if (phase != Phase.PREP) return false
+        if (!canAct(side)) return false
         val b = board(side)
         val c = b.hand.firstOrNull { it.uid == uid } ?: return false
         if (b.field.size >= FIELD_SIZE) return false
@@ -136,7 +159,7 @@ class Game(
     }
 
     fun discardFromHand(side: Side, uid: Int): Boolean {
-        if (phase != Phase.PREP) return false
+        if (!canAct(side)) return false
         val b = board(side)
         val c = b.hand.firstOrNull { it.uid == uid } ?: return false
         b.hand.remove(c)
@@ -145,7 +168,7 @@ class Game(
     }
 
     fun removeFromField(side: Side, uid: Int): Boolean {
-        if (phase != Phase.PREP) return false
+        if (!canAct(side)) return false
         val b = board(side)
         val c = b.field.firstOrNull { it.uid == uid } ?: return false
         b.field.remove(c)
@@ -155,7 +178,7 @@ class Game(
 
     /** Убрать карту с поля (в сброс) и выставить на её место карту из руки. */
     fun swap(side: Side, handUid: Int, fieldUid: Int): Boolean {
-        if (phase != Phase.PREP) return false
+        if (!canAct(side)) return false
         val b = board(side)
         if (b.hand.none { it.uid == handUid }) return false
         if (!removeFromField(side, fieldUid)) return false
@@ -181,8 +204,7 @@ class Game(
             else -> Unit
         }
         // Погибшие во время подготовки сразу уходят с поля.
-        player.field.removeAll { !it.alive }
-        enemy.field.removeAll { !it.alive }
+        bury()
     }
 
     private fun value(c: Card): Int = c.baseAtk + c.atkBonus + remaining(c)
@@ -209,8 +231,20 @@ class Game(
         }
     }
 
-    fun endPrep() {
+    /**
+     * Закончить подготовку. В обычной игре бой начинается сразу. В pvp первый игрок
+     * передаёт ход второму, а когда заканчивает второй — начинается бой.
+     */
+    fun endPrep(side: Side = Side.PLAYER) {
         if (phase != Phase.PREP) return
+        if (pvp) {
+            if (side != prepTurn) return
+            if (side == prepFirst) {
+                prepTurn = side.other
+                note = null
+                return
+            }
+        }
         note = null
         startBattle()
     }
@@ -229,8 +263,7 @@ class Game(
 
     /** Очередь: «ходит раньше всех», затем по убыванию атаки; равные — случайно. */
     private fun buildQueue() {
-        player.field.removeAll { !it.alive }
-        enemy.field.removeAll { !it.alive }
+        bury()
         val cards = (player.field + enemy.field).shuffled(rng)
         queue.clear()
         queue.addAll(
@@ -390,7 +423,7 @@ class Game(
         board(w).roundsWon++
         choiceOptions = BuffFactory.roll(rng)
         chosenOption = null
-        if (w == Side.ENEMY) {
+        if (w == Side.ENEMY && !pvp) {
             val opt = BuffFactory.botPick(choiceOptions, rng)
             applyOption(opt, Side.ENEMY)
             chosenOption = opt
@@ -400,10 +433,11 @@ class Game(
 
     // ======================= Выбор после раунда =======================
 
-    fun chooseOption(index: Int) {
-        check(phase == Phase.CHOICE && roundWinner == Side.PLAYER && chosenOption == null) { "Not your choice" }
+    /** Выбор победителя раунда. side — кто выбирает (в pvp им может быть любая из сторон). */
+    fun chooseOption(index: Int, side: Side = Side.PLAYER) {
+        check(phase == Phase.CHOICE && roundWinner == side && chosenOption == null) { "Not your choice" }
         val opt = choiceOptions[index]
-        applyOption(opt, Side.PLAYER)
+        applyOption(opt, side)
         chosenOption = opt
         advance()
     }
@@ -434,15 +468,18 @@ class Game(
 
     private fun advance() {
         // Уничтоженные карты уходят навсегда; раненые остаются с текущей защитой.
-        player.field.removeAll { !it.alive }
-        enemy.field.removeAll { !it.alive }
+        bury()
         queue.clear()
+        val choiceNote = chosenOption?.let { opt ->
+            roundWinner?.let { "${board(it).faction.heroName} выбрал «${opt.title}»" }
+        }
         round++
-        note = null
-        drawUp(player)
-        drawUp(enemy)
+        note = if (pvp) choiceNote else null
+        val limit = if (isFinal) FINAL_HAND_SIZE else HAND_SIZE
+        drawUp(player, limit)
+        drawUp(enemy, limit)
         phase = Phase.PREP
-        botPrep()
+        if (pvp) prepTurn = prepFirst else botPrep()
     }
 
     // ======================= Снимок для интерфейса =======================
@@ -455,10 +492,10 @@ class Game(
         alive = c.alive, order = order[c.uid] ?: 0
     )
 
-    private fun boardView(b: Board, order: Map<Int, Int>, hideHand: Boolean): BoardView {
+    private fun boardView(b: Board, order: Map<Int, Int>, hideHand: Boolean, asSide: Side): BoardView {
         val alive = b.field.filter { it.alive }
         return BoardView(
-            side = b.side, faction = b.faction, heroName = b.faction.heroName,
+            side = asSide, faction = b.faction, heroName = b.faction.heroName,
             hand = if (hideHand) emptyList() else b.hand.map { view(it, order) },
             handCount = b.hand.size,
             field = b.field.map { view(it, order) },
@@ -472,26 +509,59 @@ class Game(
         )
     }
 
-    fun snapshot(): GameView {
+    /**
+     * Снимок для интерфейса «глазами» стороны me: в поле player всегда она сама,
+     * в enemy — соперник (его рука скрыта). Так одно и то же состояние показывается
+     * правильно и первому, и второму игроку в сетевой партии.
+     */
+    fun snapshot(me: Side = Side.PLAYER): GameView {
+        val foe = me.other
+        fun persp(s: Side?): Side? = when (s) {
+            null -> null
+            me -> Side.PLAYER
+            else -> Side.ENEMY
+        }
         val order = HashMap<Int, Int>()
         if (phase == Phase.BATTLE) {
             queue.filter { it.alive }.forEachIndexed { i, c -> order[c.uid] = i + 1 }
         }
         val att = if (phase == Phase.BATTLE) queue.firstOrNull { it.alive } else null
-        val targets = if (att != null && att.owner == Side.PLAYER) {
+        val targets = if (att != null && att.owner == me) {
             validTargets(att).map { it.uid }.toSet()
         } else emptySet()
         return GameView(
             phase = phase, round = round, isFinal = isFinal,
-            player = boardView(player, order, false),
-            enemy = boardView(enemy, order, true),
-            attackerUid = att?.uid, attackerSide = att?.owner, validTargets = targets,
+            player = boardView(board(me), order, false, Side.PLAYER),
+            enemy = boardView(board(foe), order, true, Side.ENEMY),
+            attackerUid = att?.uid, attackerSide = persp(att?.owner), validTargets = targets,
             pass = battlePass,
-            damagePlayer = damageDealt.getValue(Side.PLAYER),
-            damageEnemy = damageDealt.getValue(Side.ENEMY),
-            roundWinner = roundWinner, options = choiceOptions, chosen = chosenOption,
-            winner = winner, note = note
+            damagePlayer = damageDealt.getValue(me),
+            damageEnemy = damageDealt.getValue(foe),
+            roundWinner = persp(roundWinner), options = choiceOptions, chosen = chosenOption,
+            winner = persp(winner), note = note,
+            canAct = canAct(me), pvp = pvp
         )
+    }
+
+    /**
+     * Контрольная сумма всего состояния партии. В сетевой игре оба устройства считают её
+     * после одного и того же хода — если числа разные, партии разошлись.
+     */
+    fun stateHash(): Int {
+        var h = 17
+        fun mix(x: Int) { h = h * 31 + x }
+        mix(phase.ordinal); mix(round); mix(battlePass); mix(prepTurn.ordinal)
+        mix(player.roundsWon); mix(enemy.roundsWon)
+        for (b in listOf(player, enemy)) {
+            for (zone in listOf(b.draw, b.hand, b.field, b.discard)) {
+                mix(-1)
+                for (c in zone) {
+                    mix(c.uid); mix(c.baseAtk); mix(c.baseDef); mix(c.atkBonus); mix(c.damage)
+                    mix(if (c.alive) 1 else 0)
+                }
+            }
+        }
+        return h
     }
 
     companion object {

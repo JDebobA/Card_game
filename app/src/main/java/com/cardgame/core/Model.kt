@@ -3,8 +3,11 @@ package com.cardgame.core
 import kotlin.math.abs
 
 const val HAND_SIZE = 5
+
+/** В финальной битве руку добирают только до 3 карт (если там уже 3 и больше — не выдают ничего). */
+const val FINAL_HAND_SIZE = 3
 const val FIELD_SIZE = 5
-const val ROUNDS = 3
+const val ROUNDS = 5
 const val FINAL_ROUND = ROUNDS + 1
 
 enum class Faction(val title: String, val heroName: String, val emoji: String, val blurb: String) {
@@ -172,7 +175,10 @@ data class GameView(
     val options: List<BuffOption>,
     val chosen: BuffOption?,
     val winner: Side?,
-    val note: String?
+    val note: String?,
+    /** Можно ли мне сейчас расставлять карты (в pvp — только в свою очередь). */
+    val canAct: Boolean = true,
+    val pvp: Boolean = false
 )
 
 data class Hit(val uid: Int, val amount: Int)

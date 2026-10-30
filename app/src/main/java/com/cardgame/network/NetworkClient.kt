@@ -6,12 +6,24 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
-class NetworkClient(private val listener: (JSONObject) -> Unit) {
-    private val client = OkHttpClient()
+/** Клиент сервера подбора игроков (server.py). */
+class NetworkClient(private val listener: (JSONObject) -> Unit) : GameLink {
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .pingInterval(15, TimeUnit.SECONDS) // быстро заметить, что сервер или сеть пропали
+        .build()
     private var webSocket: WebSocket? = null
 
-    fun connect(ip: String, port: Int = 8765) {
+    @Volatile
+    private var closedByUs = false
+
+    /** Номер партии, который выдал сервер (подставляется в игровые события). */
+    @Volatile
+    var gameId: String? = null
+
+    fun connect(ip: String, port: Int = NetConfig.SERVER_PORT) {
         val request = Request.Builder().url("ws://$ip:$port").build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -23,11 +35,12 @@ class NetworkClient(private val listener: (JSONObject) -> Unit) {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                val err = JSONObject().apply {
-                    put("type", "CONNECTION_ERROR")
-                    put("message", t.message ?: "Ошибка подключения к серверу")
-                }
-                listener(err)
+                if (closedByUs) return
+                listener(errorMessage(t.message ?: "Ошибка подключения к серверу"))
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!closedByUs) listener(errorMessage("Соединение с сервером закрыто"))
             }
         })
     }
@@ -60,7 +73,13 @@ class NetworkClient(private val listener: (JSONObject) -> Unit) {
         webSocket?.send(msg.toString())
     }
 
-    fun close() {
+    override fun send(type: String, data: JSONObject) {
+        val id = gameId ?: return
+        sendAction(id, type, data)
+    }
+
+    override fun close() {
+        closedByUs = true
         webSocket?.close(1000, "Left game")
     }
 }

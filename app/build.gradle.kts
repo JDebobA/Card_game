@@ -33,6 +33,11 @@ android {
     }
 }
 
+composeCompiler {
+    // Классы движка (списки в data class) считаются стабильными — меньше лишних перерисовок.
+    stabilityConfigurationFile.set(rootProject.layout.projectDirectory.file("stability_config.conf"))
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
