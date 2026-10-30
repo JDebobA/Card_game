@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -116,36 +117,62 @@ fun StrikeOverlay(fx: HitFx?, centers: Map<Int, Offset>) {
     }
 }
 
-/** Фон главного меню: медленно плывущие туманности и мерцающие звёзды (рисуется только при перерисовке кадра). */
+/**
+ * Фон главного меню. Два больших свечения нарисованы ОДИН раз (drawWithCache) и дальше только
+ * двигаются слоем GPU (graphicsLayer) — без перерисовки. Звёзды мерцают в отдельном маленьком Canvas.
+ */
 @Composable
 fun MenuBackdrop() {
     val t = rememberInfiniteTransition(label = "backdrop")
     val phase = t.animateFloat(
         initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(16000, easing = LinearEasing)),
+        animationSpec = infiniteRepeatable(tween(14000, easing = LinearEasing)),
         label = "phase"
     )
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer {
+                    val p = phase.value * 2f * PI.toFloat()
+                    translationX = size.width * 0.12f * sin(p)
+                    translationY = size.height * 0.03f * sin(p * 2f)
+                }
+                .drawWithCache {
+                    val c = Offset(size.width * 0.25f, size.height * 0.16f)
+                    val r = size.width * 0.75f
+                    val brush = Brush.radialGradient(listOf(Color(0x558B5CF6), Color.Transparent), center = c, radius = r)
+                    onDrawBehind { drawCircle(brush, radius = r, center = c) }
+                }
+        )
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer {
+                    val p = phase.value * 2f * PI.toFloat()
+                    translationX = -size.width * 0.1f * sin(p)
+                    translationY = size.height * 0.04f * sin(p)
+                }
+                .drawWithCache {
+                    val c = Offset(size.width * 0.8f, size.height * 0.62f)
+                    val r = size.width * 0.7f
+                    val brush = Brush.radialGradient(listOf(Color(0x40F0C766), Color.Transparent), center = c, radius = r)
+                    onDrawBehind { drawCircle(brush, radius = r, center = c) }
+                }
+        )
+        Stars(phase)
+    }
+}
+
+@Composable
+private fun Stars(phase: androidx.compose.runtime.State<Float>) {
     val stars = remember {
         val r = kotlin.random.Random(7)
-        List(34) { floatArrayOf(r.nextFloat(), r.nextFloat(), 0.6f + r.nextFloat() * 1.6f, r.nextFloat()) }
+        List(24) { floatArrayOf(r.nextFloat(), r.nextFloat(), 0.6f + r.nextFloat() * 1.4f, r.nextFloat()) }
     }
     Canvas(Modifier.fillMaxSize()) {
         val p = phase.value * 2f * PI.toFloat()
-        val w = size.width
-        val h = size.height
-        val a = Offset(w * (0.25f + 0.12f * sin(p)), h * (0.16f + 0.03f * sin(p * 2f)))
-        val b = Offset(w * (0.8f - 0.1f * sin(p)), h * (0.62f + 0.04f * sin(p)))
-        drawCircle(
-            brush = Brush.radialGradient(listOf(Color(0x558B5CF6), Color.Transparent), center = a, radius = w * 0.75f),
-            radius = w * 0.75f, center = a
-        )
-        drawCircle(
-            brush = Brush.radialGradient(listOf(Color(0x40F0C766), Color.Transparent), center = b, radius = w * 0.7f),
-            radius = w * 0.7f, center = b
-        )
         for (s in stars) {
             val tw = 0.3f + 0.7f * abs(sin(p + s[3] * 6.28f))
-            drawCircle(Color.White.copy(alpha = 0.6f * tw), radius = s[2], center = Offset(s[0] * w, s[1] * h))
+            drawCircle(Color.White.copy(alpha = 0.6f * tw), radius = s[2], center = Offset(s[0] * size.width, s[1] * size.height))
         }
     }
 }

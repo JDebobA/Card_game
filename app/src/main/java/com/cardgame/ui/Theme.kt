@@ -66,7 +66,7 @@ fun Modifier.glass(shape: Shape, fill: Color = Color(0x14FFFFFF)): Modifier =
 private val TitleShadow = Shadow(Color(0xCC000000), Offset(0f, 3f), 6f)
 
 /** Заголовочный стиль (с засечками и тенью). */
-fun serif(size: Float, color: Color = Pal.text, weight: FontWeight = FontWeight.Bold, shadow: Boolean = true) =
+fun serif(size: Float, color: Color = Pal.text, weight: FontWeight = FontWeight.Bold, shadow: Boolean = false) =
     TextStyle(
         color = color, fontSize = size.sp, fontFamily = FontFamily.Serif, fontWeight = weight,
         shadow = if (shadow) TitleShadow else null

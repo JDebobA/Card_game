@@ -42,7 +42,10 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -181,6 +184,9 @@ fun BattleCard(
     val (top, bottom) = remember(card.faction) { factionGradient(card.faction) }
     val accent = remember(card.faction) { factionAccent(card.faction) }
     val density = LocalDensity.current.density
+    val bg = remember(top, bottom) { Brush.verticalGradient(listOf(top, bottom)) }
+    val glow = remember(accent) { Brush.radialGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent)) }
+    val cornerPx = (9 * u)
 
     // Появление карты: «вылетает» с пружинкой.
     val appear = remember { Animatable(0f) }
@@ -202,7 +208,7 @@ fun BattleCard(
         }
     }
 
-    val edge by animateColorAsState(
+    val edge = animateColorAsState(
         when (mark) {
             CardMark.SELECTED, CardMark.ACTIVE -> Pal.gold
             CardMark.TARGET, CardMark.HIT -> Pal.red
@@ -222,10 +228,8 @@ fun BattleCard(
         card.maxDef < card.baseDef -> Pal.down
         else -> Color.White
     }
-    val hpFrac by animateFloatAsState(
-        if (card.maxDef <= 0) 0f else (card.def.toFloat() / card.maxDef).coerceIn(0f, 1f),
-        tween(350), label = "hp"
-    )
+    val targetFrac = if (card.maxDef <= 0) 0f else (card.def.toFloat() / card.maxDef).coerceIn(0f, 1f)
+    val hp = animateFloatAsState(targetFrac, tween(350), label = "hp")
     val deadAlpha by animateFloatAsState(if (card.alive) 1f else 0.35f, tween(400), label = "dead")
 
     Box(
@@ -236,6 +240,7 @@ fun BattleCard(
                 scaleX = s; scaleY = s
                 alpha = (appear.value.coerceIn(0f, 1f)) * deadAlpha * (if (dimmed) 0.65f else 1f)
                 translationX = shake.value
+                compositingStrategy = CompositingStrategy.ModulateAlpha
             }
             .then(
                 if (onCenter != null) Modifier.onGloballyPositioned {
@@ -247,14 +252,21 @@ fun BattleCard(
             Modifier
                 .fillMaxWidth().fillMaxHeight()
                 .clip(shape)
-                .background(Brush.verticalGradient(listOf(top, bottom)))
-                .border(edgeWidth, edge, shape)
+                .background(bg)
+                .drawBehind {
+                    val w = edgeWidth.toPx()
+                    drawRoundRect(
+                        color = edge.value, topLeft = Offset(w / 2, w / 2),
+                        size = Size(size.width - w, size.height - w),
+                        cornerRadius = CornerRadius(cornerPx.dp.toPx()), style = Stroke(w)
+                    )
+                }
                 .then(if (onClick != null) Modifier.pressClick(true, onClick) else Modifier)
         ) {
             // свечение под эмодзи
             Box(
                 Modifier.align(Alignment.TopCenter).padding(top = (4 * u).dp).size((40 * u).dp)
-                    .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent)), CircleShape)
+                    .background(glow, CircleShape)
             )
             Text(
                 card.emoji, fontSize = (26 * u).sp,
@@ -288,8 +300,9 @@ fun BattleCard(
                     .height((4 * u).dp).clip(CircleShape).background(Color(0x66000000))
             ) {
                 Box(
-                    Modifier.fillMaxHeight().fillMaxWidth(hpFrac)
-                        .background(if (hpFrac > 0.5f) Pal.teal else if (hpFrac > 0.25f) Pal.atk else Pal.red)
+                    Modifier.fillMaxHeight().fillMaxWidth()
+                        .graphicsLayer { scaleX = hp.value; transformOrigin = TransformOrigin(0f, 0.5f) }
+                        .background(if (targetFrac > 0.5f) Pal.teal else if (targetFrac > 0.25f) Pal.atk else Pal.red)
                 )
             }
             if (!card.alive) Text("☠", fontSize = (28 * u).sp, modifier = Modifier.align(Alignment.Center))
@@ -393,7 +406,7 @@ fun HandFan(hand: List<CardView>, selectedUid: Int?, dimmed: Boolean, onTap: (In
 fun HeroPanel(board: BoardView, subtitle: String, isEnemy: Boolean, trailing: @Composable () -> Unit) {
     val accent = if (isEnemy) Pal.red else Pal.teal
     val (top, bottom) = remember(board.faction) { factionGradient(board.faction) }
-    val frac by animateFloatAsState(
+    val frac = animateFloatAsState(
         if (board.totalMaxDef == 0) 0f else (board.totalDef.toFloat() / board.totalMaxDef).coerceIn(0f, 1f),
         tween(450), label = "heroHp"
     )
@@ -413,7 +426,8 @@ fun HeroPanel(board: BoardView, subtitle: String, isEnemy: Boolean, trailing: @C
                     Modifier.fillMaxWidth().height(14.dp).clip(CircleShape).background(Color(0x33FFFFFF))
                 ) {
                     Box(
-                        Modifier.fillMaxHeight().fillMaxWidth(frac)
+                        Modifier.fillMaxHeight().fillMaxWidth()
+                            .graphicsLayer { scaleX = frac.value; transformOrigin = TransformOrigin(0f, 0.5f) }
                             .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.5f), accent)))
                     )
                     Text(

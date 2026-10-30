@@ -18,7 +18,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Release-сборка в разы быстрее debug (Compose в debug работает медленно).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Подпись debug-ключом, чтобы APK можно было сразу установить на телефон.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -47,4 +52,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Устанавливает baseline-профили Compose при установке — быстрее старт и плавнее анимации.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }
